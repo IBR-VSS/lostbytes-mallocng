@@ -1,6 +1,8 @@
 
 ALL = libmallocng.a libmallocng.so
-SRCS = malloc.c calloc.c free.c realloc.c aligned_alloc.c posix_memalign.c memalign.c malloc_usable_size.c dump.c mallocstat.c
+SRCS = malloc.c calloc.c free.c realloc.c aligned_alloc.c posix_memalign.c \
+memalign.c malloc_usable_size.c dump.c mallocstat.c helper.c
+
 OBJS = $(SRCS:.c=.o)
 CFLAGS = -fPIC -Wall -O2 -ffreestanding
 
