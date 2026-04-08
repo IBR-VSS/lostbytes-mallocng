@@ -25,101 +25,100 @@ static int fd = -1;
 void mallocstat(void);
 
 void profiler_interrupt(int sig) {
-    if (MT && a_cas(&malloc_lock, 0, 1) != 0) {
-        print_str("No sample...\n");
-        return;
-    }
+  if (MT && a_cas(&malloc_lock, 0, 1) != 0) {
+    print_str("No sample...\n");
+    return;
+  }
 
-    mallocstat();
+  mallocstat();
 
-    if (MT)
-        __sync_lock_release(&malloc_lock, 0);
+  if (MT)
+    __sync_lock_release(&malloc_lock, 0);
 }
 
 __attribute__((constructor)) void start_malloc_profiler(void) {
-    fd = open("buffbloat.csv", O_CREAT | O_WRONLY | O_TRUNC, 0664);
-    assert(fd != -1);
+  fd = open("buffbloat.csv", O_CREAT | O_WRONLY | O_TRUNC, 0664);
+  assert(fd != -1);
 
-    struct sigaction sa = {0};
-    sa.sa_handler = profiler_interrupt;
-    sigaction(SIGALRM, &sa, NULL);
+  struct sigaction sa = {0};
+  sa.sa_handler = profiler_interrupt;
+  sigaction(SIGALRM, &sa, NULL);
 
-    struct itimerval timer = {0};
-    timer.it_value.tv_usec = TIMER_INTERVAL_US;
-    timer.it_interval.tv_usec = TIMER_INTERVAL_US;
-    setitimer(ITIMER_REAL, &timer, NULL);
+  struct itimerval timer = {0};
+  timer.it_value.tv_usec = TIMER_INTERVAL_US;
+  timer.it_interval.tv_usec = TIMER_INTERVAL_US;
+  setitimer(ITIMER_REAL, &timer, NULL);
 }
 
 static uint32_t sample_id = 0;
 
 // 3. The Profiler
 void mallocstat(void) {
-    counter_ms += TIMER_INTERVAL_US / 1000;
-    struct meta_area *ma = ctx.meta_area_head;
+  counter_ms += TIMER_INTERVAL_US / 1000;
+  struct meta_area *ma = ctx.meta_area_head;
 
-    if (sample_id == 0) {
-        // CSV Header
-        write_str("counter_ms,groupaddr,slotidx,slotsize,status\n", fd);
-    }
+  if (sample_id == 0) {
+    // CSV Header
+    write_str("counter_ms,groupaddr,slotidx,slotsize,status\n", fd);
+  }
 
-    while (ma != NULL) {
-        for (int i = 0; i < ma->nslots; i++) {
-            struct meta *m = &ma->slots[i];
+  while (ma != NULL) {
+    for (int i = 0; i < ma->nslots; i++) {
+      struct meta *m = &ma->slots[i];
 
-            if (m->mem == NULL)
-                continue;
+      if (m->mem == NULL)
+        continue;
 
-            // Combine masks to find all unused (ready + quarantined) slots
-            uint32_t unused_mask = m->avail_mask | m->freed_mask;
+      // Combine masks to find all unused (ready + quarantined) slots
+      uint32_t unused_mask = m->avail_mask | m->freed_mask;
 
-            // Calculate the actual byte size of the slots
-            size_t slot_size;
-            if (m->sizeclass == 63) {
-                slot_size = m->maplen * 4096; // Direct mmap
-            } else {
-                slot_size =
-                    scs[m->sizeclass] * 16; // Standard size class (UNIT = 16)
-            }
+      // Calculate the actual byte size of the slots
+      size_t slot_size;
+      if (m->sizeclass == 63) {
+        slot_size = m->maplen * 4096; // Direct mmap
+      } else {
+        slot_size = scs[m->sizeclass] * 16; // Standard size class (UNIT = 16)
+      }
 
-            // Loop through every slot that exists in this group
-            for (int j = 0; j <= m->last_idx; j++) {
+      // Loop through every slot that exists in this group
+      for (int j = 0; j <= m->last_idx; j++) {
 
-                // 1. Is the slot empty according to mallocng?
-                int is_empty = (unused_mask & (1U << j)) != 0;
+        // 1. Is the slot empty according to mallocng?
+        int is_empty = (unused_mask & (1U << j)) != 0;
 
-                // 2. Find the slot's address and align it to 4KB for mincore
-                uintptr_t slot_addr = (uintptr_t)m->mem + (j * slot_size);
-                uintptr_t page_addr = slot_addr & ~4095UL;
+        // 2. Find the slot's address and align it to 4KB for mincore
+        uintptr_t slot_addr = (uintptr_t)m->mem + (j * slot_size);
+        uintptr_t page_addr = slot_addr & ~4095UL;
 
-                // 3. Ask the kernel if this page is backed by physical RAM
-                unsigned char vec;
-                int is_resident = 0;
-                if (mincore((void *)page_addr, 4096, &vec) == 0) {
-                    is_resident = vec & 1;
-                }
-
-                // Write CSV
-                write_int(counter_ms, fd);
-                write_str(",", fd);
-                write_hex((uintptr_t)m->mem, fd);
-                write_str(",", fd);
-                write_int(j, fd);
-                write_str(",", fd);
-                write_int(slot_size, fd);
-                write_str(",", fd);
-
-                if (is_empty && is_resident) {
-                    write_str("WASTED\n", fd);
-                } else if (!is_empty && is_resident) {
-                    write_str("ACTIVE\n", fd);
-                } else if (is_empty && !is_resident) {
-                    write_str("IDLE\n", fd);
-                } else if (!is_empty && !is_resident) {
-                    write_str("SWAPPED\n", fd);
-                }
-            }
+        // 3. Ask the kernel if this page is backed by physical RAM
+        unsigned char vec;
+        int is_resident = 0;
+        if (mincore((void *)page_addr, 4096, &vec) == 0) {
+          is_resident = vec & 1;
         }
-        ma = ma->next;
+
+        // Write CSV
+        write_int(counter_ms, fd);
+        write_str(",", fd);
+        write_hex((uintptr_t)m->mem, fd);
+        write_str(",", fd);
+        write_int(j, fd);
+        write_str(",", fd);
+        write_int(slot_size, fd);
+        write_str(",", fd);
+
+        if (is_empty && is_resident) {
+          write_str("WASTED\n", fd);
+        } else if (!is_empty && is_resident) {
+          write_str("ACTIVE\n", fd);
+        } else if (is_empty && !is_resident) {
+          write_str("IDLE\n", fd);
+        } else if (!is_empty && !is_resident) {
+          write_str("SWAPPED\n", fd);
+        }
+      }
     }
-    sample_id++;
+    ma = ma->next;
+  }
+  sample_id++;
 }
