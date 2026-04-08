@@ -39,14 +39,14 @@ void print_hex(uintptr_t p) {
     write(STDOUT, &buf[i + 1], 19 - i);
 }
 
-void write_str(const char *s, FILE *f) {
+void write_str(const char *s, int fd) {
     int len = 0;
     while (s[len])
         len++;
-    fwrite(s, sizeof(char), len, f);
+    write(fd, s, len);
 }
 
-void write_int(uint32_t n, FILE *f) {
+void write_int(uint32_t n, int fd) {
     char buf[12];
     int i = 11;
     if (n == 0)
@@ -55,10 +55,10 @@ void write_int(uint32_t n, FILE *f) {
         buf[i--] = (n % 10) + '0';
         n /= 10;
     }
-    fwrite(&buf[i + 1], sizeof(char), 11 - i, f);
+    write(fd, &buf[i + 1], 11 - i);
 }
 
-void write_hex(uintptr_t p, FILE *f) {
+void write_hex(uintptr_t p, int fd) {
     char buf[20];
     int i = 19;
     if (p == 0)
@@ -70,5 +70,5 @@ void write_hex(uintptr_t p, FILE *f) {
     }
     buf[i--] = 'x';
     buf[i--] = '0';
-    fwrite(&buf[i + 1], sizeof(char), 19 - i, f);
+    write(fd, &buf[i + 1], 19 - i);
 }
