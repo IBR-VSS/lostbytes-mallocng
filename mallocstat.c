@@ -1,5 +1,6 @@
 #include <assert.h>
 #define _GNU_SOURCE
+#include <fcntl.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -19,12 +20,11 @@ const uint16_t scs[] = {
 static uint64_t counter_ms = 0;
 #define TIMER_INTERVAL_US 100000
 
-static FILE *f;
+static int fd = -1;
+
+void mallocstat(void);
 
 void profiler_interrupt(int sig) {
-    if (malloc_active)
-        return;
-
     if (MT && a_cas(&malloc_lock, 0, 1) != 0) {
         print_str("No sample...\n");
         return;
@@ -33,10 +33,13 @@ void profiler_interrupt(int sig) {
     mallocstat();
 
     if (MT)
-        a_store(malloc_lock, 0);
+        __sync_lock_release(&malloc_lock, 0);
 }
 
-void start_malloc_profiler(void) {
+__attribute__((constructor)) void start_malloc_profiler(void) {
+    fd = open("buffbloat.csv", O_CREAT | O_WRONLY | O_TRUNC, 0664);
+    assert(fd != -1);
+
     struct sigaction sa = {0};
     sa.sa_handler = profiler_interrupt;
     sigaction(SIGALRM, &sa, NULL);
@@ -45,9 +48,6 @@ void start_malloc_profiler(void) {
     timer.it_value.tv_usec = TIMER_INTERVAL_US;
     timer.it_interval.tv_usec = TIMER_INTERVAL_US;
     setitimer(ITIMER_REAL, &timer, NULL);
-
-    f = fopen("buffbloat.csv", "w");
-    assert(f != NULL);
 }
 
 static uint32_t sample_id = 0;
@@ -59,7 +59,7 @@ void mallocstat(void) {
 
     if (sample_id == 0) {
         // CSV Header
-        write_str("counter_ms,groupaddr,slotidx,slotsize,status\n", f);
+        write_str("counter_ms,groupaddr,slotidx,slotsize,status\n", fd);
     }
 
     while (ma != NULL) {
@@ -99,23 +99,23 @@ void mallocstat(void) {
                 }
 
                 // Write CSV
-                write_int(counter_ms, f);
-                write_str(",", f);
-                write_hex((uintptr_t)m->mem, f);
-                write_str(",", f);
-                write_int(j, f);
-                write_str(",", f);
-                write_int(slot_size, f);
-                write_str(",", f);
+                write_int(counter_ms, fd);
+                write_str(",", fd);
+                write_hex((uintptr_t)m->mem, fd);
+                write_str(",", fd);
+                write_int(j, fd);
+                write_str(",", fd);
+                write_int(slot_size, fd);
+                write_str(",", fd);
 
                 if (is_empty && is_resident) {
-                    write_str("WASTED\n", f);
+                    write_str("WASTED\n", fd);
                 } else if (!is_empty && is_resident) {
-                    write_str("ACTIVE\n", f);
+                    write_str("ACTIVE\n", fd);
                 } else if (is_empty && !is_resident) {
-                    write_str("IDLE\n", f);
+                    write_str("IDLE\n", fd);
                 } else if (!is_empty && !is_resident) {
-                    write_str("SWAPPED\n", f);
+                    write_str("SWAPPED\n", fd);
                 }
             }
         }
