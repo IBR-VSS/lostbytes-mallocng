@@ -21,4 +21,4 @@ libmallocng.a: $(OBJS)
 	ranlib $@
 
 libmallocng.so: $(OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) -shared -o $@ $(OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -shared -o $@ $(OBJS) -pthread

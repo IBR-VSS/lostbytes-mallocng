@@ -1,11 +1,11 @@
-#include <assert.h>
 #define _GNU_SOURCE
+
+#include <assert.h>
 #include <fcntl.h>
-#include <signal.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/mman.h>
-#include <sys/time.h>
 #include <unistd.h>
 
 #include "helper.h"
@@ -18,36 +18,37 @@ const uint16_t scs[] = {
     1169, 1364, 1637, 2047, 2340, 2730, 3276, 4095, 4680, 5460, 6552, 8191};
 
 static uint64_t counter_ms = 0;
-#define TIMER_INTERVAL_US 100000
+#define TIMER_INTERVAL_US 1000000
 
 static int fd = -1;
 
 void mallocstat(void);
 
-void profiler_interrupt(int sig) {
-  if (MT && a_cas(&malloc_lock, 0, 1) != 0) {
-    print_str("No sample...\n");
-    return;
+void *profiler_thread(void *arg) {
+  while (1) {
+    usleep(TIMER_INTERVAL_US);
+
+    if (MT && a_cas(&malloc_lock, 0, 1) != 0) {
+      continue;
+    }
+
+    mallocstat();
+
+    if (MT)
+      __sync_lock_release(&malloc_lock, 0);
   }
-
-  mallocstat();
-
-  if (MT)
-    __sync_lock_release(&malloc_lock, 0);
 }
 
 __attribute__((constructor)) void start_malloc_profiler(void) {
   fd = open("buffbloat.csv", O_CREAT | O_WRONLY | O_TRUNC, 0664);
   assert(fd != -1);
 
-  struct sigaction sa = {0};
-  sa.sa_handler = profiler_interrupt;
-  sigaction(SIGALRM, &sa, NULL);
-
-  struct itimerval timer = {0};
-  timer.it_value.tv_usec = TIMER_INTERVAL_US;
-  timer.it_interval.tv_usec = TIMER_INTERVAL_US;
-  setitimer(ITIMER_REAL, &timer, NULL);
+  pthread_t tid;
+  if (pthread_create(&tid, NULL, profiler_thread, NULL) == 0) {
+    pthread_detach(tid);
+  } else {
+    print_str("Failed to start profiler thread..\n");
+  }
 }
 
 static uint32_t sample_id = 0;
