@@ -60,7 +60,7 @@ void mallocstat(void) {
 
   if (sample_id == 0) {
     // CSV Header
-    write_str("counter_ms,groupaddr,slotidx,slotsize,status\n", fd);
+    write_str("counter_ms,groupaddr,slotidx,slotsize,pageaddr,status\n", fd);
   }
 
   while (ma != NULL) {
@@ -106,6 +106,8 @@ void mallocstat(void) {
         write_int(j, fd);
         write_str(",", fd);
         write_int(slot_size, fd);
+        write_str(",", fd);
+        write_hex(page_addr, fd);
         write_str(",", fd);
 
         if (is_empty && is_resident) {
