@@ -86,6 +86,9 @@ void mallocstat(void) {
 
         // 1. Is the slot empty according to mallocng?
         int is_empty = (unused_mask & (1U << j)) != 0;
+        if (!is_empty) {
+          continue;
+        }
 
         // 2. Find the slot's address and align it to 4KB for mincore
         uintptr_t slot_addr = (uintptr_t)m->mem + (j * slot_size);
