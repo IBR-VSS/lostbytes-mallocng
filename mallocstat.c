@@ -20,7 +20,8 @@ const uint16_t scs[] = {
 static uint64_t counter_ms = 0;
 #define TIMER_INTERVAL_US 1000000
 
-static int fd = -1;
+static int fd_slots = -1;
+static int fd_pages = -1;
 
 void mallocstat(void);
 
@@ -40,8 +41,10 @@ void *profiler_thread(void *arg) {
 }
 
 __attribute__((constructor)) void start_malloc_profiler(void) {
-  fd = open("buffbloat.csv", O_CREAT | O_WRONLY | O_TRUNC, 0664);
-  assert(fd != -1);
+  fd_slots = open("slots.csv", O_CREAT | O_WRONLY | O_TRUNC, 0664);
+  assert(fd_slots != -1);
+  fd_pages = open("pages.csv", O_CREAT | O_WRONLY | O_TRUNC, 0664);
+  assert(fd_pages != -1);
 
   pthread_t tid;
   if (pthread_create(&tid, NULL, profiler_thread, NULL) == 0) {
@@ -60,15 +63,22 @@ void mallocstat(void) {
 
   if (sample_id == 0) {
     // CSV Header
-    write_str("counter_ms,groupaddr,slotidx,slotsize,pageaddr,status\n", fd);
+    write_str("counter_ms,groupaddr,slotidx,slotsize,pageaddr,status\n",
+              fd_slots);
+    write_str("counter_ms,n_phys\n", fd_pages);
   }
 
+  size_t n_phys = 0;
   while (ma != NULL) {
     for (int i = 0; i < ma->nslots; i++) {
       struct meta *m = &ma->slots[i];
 
-      if (m->mem == NULL)
+      // Ignore subgroups
+      if (m->maplen == 0)
         continue;
+
+      uintptr_t groupaddr = (uintptr_t)m->mem;
+      assert(groupaddr % 4096 == 0);
 
       // Combine masks to find all unused (ready + quarantined) slots
       uint32_t unused_mask = m->avail_mask | m->freed_mask;
@@ -91,7 +101,7 @@ void mallocstat(void) {
         }
 
         // 2. Find the slot's address and align it to 4KB for mincore
-        uintptr_t slot_addr = (uintptr_t)m->mem + (j * slot_size);
+        uintptr_t slot_addr = groupaddr + (j * slot_size);
         uintptr_t page_addr = slot_addr & ~4095UL;
 
         // 3. Ask the kernel if this page is backed by physical RAM
@@ -102,29 +112,47 @@ void mallocstat(void) {
         }
 
         // Write CSV
-        write_int(counter_ms, fd);
-        write_str(",", fd);
-        write_hex((uintptr_t)m->mem, fd);
-        write_str(",", fd);
-        write_int(j, fd);
-        write_str(",", fd);
-        write_int(slot_size, fd);
-        write_str(",", fd);
-        write_hex(page_addr, fd);
-        write_str(",", fd);
+        write_int(counter_ms, fd_slots);
+        write_str(",", fd_slots);
+        write_hex(groupaddr, fd_slots);
+        write_str(",", fd_slots);
+        write_int(j, fd_slots);
+        write_str(",", fd_slots);
+        write_int(slot_size, fd_slots);
+        write_str(",", fd_slots);
+        write_hex(page_addr, fd_slots);
+        write_str(",", fd_slots);
 
         if (is_empty && is_resident) {
-          write_str("WASTED\n", fd);
+          write_str("WASTED\n", fd_slots);
         } else if (!is_empty && is_resident) {
-          write_str("ACTIVE\n", fd);
+          write_str("ACTIVE\n", fd_slots);
         } else if (is_empty && !is_resident) {
-          write_str("IDLE\n", fd);
+          write_str("IDLE\n", fd_slots);
         } else if (!is_empty && !is_resident) {
-          write_str("SWAPPED\n", fd);
+          write_str("SWAPPED\n", fd_slots);
+        }
+      }
+
+      // TODO: Also measure total phys page mapped
+
+      for (size_t j = 0; j < m->maplen; j++) {
+        void *curr_groupaddr = (char *)m->mem + (j * 4096);
+        unsigned char vec;
+        int is_resident = 0;
+        assert(mincore(curr_groupaddr, 4096, &vec) == 0);
+        is_resident = vec & 1;
+
+        if (is_resident) {
+          n_phys++;
         }
       }
     }
     ma = ma->next;
   }
+  write_int(counter_ms, fd_pages);
+  write_str(",", fd_pages);
+  write_int(n_phys, fd_pages);
+  write_str("\n", fd_pages);
   sample_id++;
 }
