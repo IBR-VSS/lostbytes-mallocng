@@ -100,9 +100,14 @@ void mallocstat(void) {
           continue;
         }
 
+        // TODO: better differentiation, to which pages a slot belongs to
+
         // 2. Find the slot's address and align it to 4KB for mincore
         uintptr_t slot_addr = groupaddr + (j * slot_size);
         uintptr_t page_addr = slot_addr & ~4095UL;
+
+        uintptr_t slot_start = slot_addr;
+        uintptr_t slot_end = slot_addr + slot_size;
 
         // 3. Ask the kernel if this page is backed by physical RAM
         unsigned char vec;
@@ -133,8 +138,6 @@ void mallocstat(void) {
           write_str("SWAPPED\n", fd_slots);
         }
       }
-
-      // TODO: Also measure total phys page mapped
 
       for (size_t j = 0; j < m->maplen; j++) {
         void *curr_groupaddr = (char *)m->mem + (j * 4096);
