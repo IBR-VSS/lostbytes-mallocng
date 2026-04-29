@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/mman.h>
@@ -24,6 +25,22 @@ static int fd_slots = -1;
 static int fd_pages = -1;
 
 void mallocstat(void);
+
+uintptr_t page_floor(uintptr_t p) { return p & ~4095UL; }
+
+uintptr_t page_ceil(uintptr_t p) { return (p + 4095) & ~4095UL; }
+
+bool is_page_aligned(uintptr_t p) { return p % 4096 == 0; }
+
+size_t head_size(uintptr_t slot_start) {
+  uintptr_t ceil = page_ceil(slot_start);
+  return ceil - slot_start;
+}
+
+size_t tail_size(uintptr_t slot_end) {
+  uintptr_t floor = page_floor(slot_end);
+  return slot_end - floor;
+}
 
 void *profiler_thread(void *arg) {
   while (1) {
@@ -54,7 +71,21 @@ __attribute__((constructor)) void start_malloc_profiler(void) {
   }
 }
 
+void get_hole_status(int is_empty, int is_resident) {
+  if (is_empty && is_resident) {
+    write_str("WASTED", fd_slots);
+  } else if (!is_empty && is_resident) {
+    write_str("ACTIVE", fd_slots);
+  } else if (is_empty && !is_resident) {
+    write_str("IDLE", fd_slots);
+  } else if (!is_empty && !is_resident) {
+    write_str("SWAPPED", fd_slots);
+  }
+}
+
 static uint32_t sample_id = 0;
+
+static unsigned char page_vec[4096];
 
 // 3. The Profiler
 void mallocstat(void) {
@@ -63,8 +94,10 @@ void mallocstat(void) {
 
   if (sample_id == 0) {
     // CSV Header
-    write_str("counter_ms,groupaddr,slotidx,slotsize,pageaddr,status\n",
-              fd_slots);
+    write_str(
+        "counter_ms,groupaddr,slotidx,slotsize,pageaddr_body,n_phys_body,n_"
+        "virt_body,pageaddr_head,status_head,pageaddr_tail,status_tail\n",
+        fd_slots);
     write_str("counter_ms,n_phys\n", fd_pages);
   }
 
@@ -101,19 +134,63 @@ void mallocstat(void) {
         }
 
         // TODO: better differentiation, to which pages a slot belongs to
+        // - Also mincore body_addr instead of page_addr, page_addr is not
+        //   really correct
 
         // 2. Find the slot's address and align it to 4KB for mincore
         uintptr_t slot_addr = groupaddr + (j * slot_size);
-        uintptr_t page_addr = slot_addr & ~4095UL;
 
         uintptr_t slot_start = slot_addr;
-        uintptr_t slot_end = slot_addr + slot_size;
+        uintptr_t slot_end = slot_addr + slot_size - 1;
+
+        uintptr_t head_end = page_ceil(slot_start);
+        uintptr_t tail_start = page_floor(slot_end);
+
+        size_t head_size_b;
+        size_t tail_size_b;
+
+        uintptr_t body_start = slot_start;
+        uintptr_t body_end = slot_end;
+        if (head_end >= tail_start ||
+            (is_page_aligned(head_end) && is_page_aligned(slot_size))) {
+          // Only body
+          head_size_b = 0;
+          tail_size_b = 0;
+        } else {
+          head_size_b = head_size(slot_start);
+          tail_size_b = tail_size(slot_end);
+          body_start = head_end;
+          body_end = tail_start - 1;
+        }
 
         // 3. Ask the kernel if this page is backed by physical RAM
-        unsigned char vec;
-        int is_resident = 0;
-        if (mincore((void *)page_addr, 4096, &vec) == 0) {
-          is_resident = vec & 1;
+
+        uintptr_t head_start = slot_start;
+        uintptr_t tail_end = slot_end;
+
+        size_t n_body_page =
+            (page_floor(body_end) - page_floor(body_start)) / 4096;
+        n_body_page += 1;
+
+        int is_resident_h = 0;
+        if (head_size_b != 0) {
+          if (mincore((void *)page_floor(head_start), 4096, page_vec) == 0) {
+            is_resident_h = page_vec[0] & 1;
+          }
+        }
+        int n_phys_body = 0;
+        size_t body_pglen = n_body_page * 4096;
+        if (mincore((void *)page_floor(body_start), body_pglen, page_vec) ==
+            0) {
+          for (size_t pg_i = 0; pg_i < n_body_page; pg_i++) {
+            n_phys_body += page_vec[pg_i] & 1;
+          }
+        }
+        int is_resident_t = 0;
+        if (tail_size_b != 0) {
+          if (mincore((void *)page_floor(tail_end), 4096, page_vec) == 0) {
+            is_resident_t = page_vec[0] & 1;
+          }
         }
 
         // Write CSV
@@ -125,18 +202,20 @@ void mallocstat(void) {
         write_str(",", fd_slots);
         write_int(slot_size, fd_slots);
         write_str(",", fd_slots);
-        write_hex(page_addr, fd_slots);
+        write_hex(body_start, fd_slots);
         write_str(",", fd_slots);
-
-        if (is_empty && is_resident) {
-          write_str("WASTED\n", fd_slots);
-        } else if (!is_empty && is_resident) {
-          write_str("ACTIVE\n", fd_slots);
-        } else if (is_empty && !is_resident) {
-          write_str("IDLE\n", fd_slots);
-        } else if (!is_empty && !is_resident) {
-          write_str("SWAPPED\n", fd_slots);
-        }
+        write_int(n_phys_body, fd_slots);
+        write_str(",", fd_slots);
+        write_int(n_body_page, fd_slots);
+        write_str(",", fd_slots);
+        write_hex(page_floor(head_start), fd_slots);
+        write_str(",", fd_slots);
+        get_hole_status(is_empty, is_resident_h);
+        write_str(",", fd_slots);
+        write_hex(page_floor(tail_end), fd_slots);
+        write_str(",", fd_slots);
+        get_hole_status(is_empty, is_resident_t);
+        write_str("\n", fd_slots);
       }
 
       for (size_t j = 0; j < m->maplen; j++) {
