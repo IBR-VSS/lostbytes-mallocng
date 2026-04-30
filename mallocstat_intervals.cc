@@ -28,7 +28,7 @@ Das Iterate ruft für jedes verschmolzene Loch einen callback auf.
 #define REPORT
 #endif
 
-// #define REPORT
+#define REPORT
 
 namespace {
     // Basisklasse zur zentralen Verwaltung der mmap-Chunks und Typ-übergreifenden Free-Lists
@@ -265,25 +265,25 @@ namespace {
     std::vector<std::pair<uintptr_t, size_t>> test_results;
 }
 
-extern "C" void test_callback(void* start, size_t length) {
-    test_results.emplace_back(reinterpret_cast<uintptr_t>(start), length);
+extern "C" void test_callback(uintptr_t start, size_t length) {
+    test_results.emplace_back(start, length);
 }
 
 int main() {
     print_str("[DEBUG] Test Start\n\n");
 
     // Isolierte Intervalle
-    mallocstat_hole_report(reinterpret_cast<void*>(0x1000), 0x100);
-    mallocstat_hole_report(reinterpret_cast<void*>(0x1300), 0x100);
+    mallocstat_hole_report((0x1000), 0x100);
+    mallocstat_hole_report((0x1300), 0x100);
 
     // Verschmelzung nach links
-    mallocstat_hole_report(reinterpret_cast<void*>(0x1100), 0x50);
+    mallocstat_hole_report((0x1100), 0x50);
 
     // Verschmelzung nach rechts
-    mallocstat_hole_report(reinterpret_cast<void*>(0x1250), 0xB0);
+    mallocstat_hole_report((0x1250), 0xB0);
 
     // Bilaterale Verschmelzung
-    mallocstat_hole_report(reinterpret_cast<void*>(0x1150), 0x100);
+    mallocstat_hole_report((0x1150), 0x100);
 
     // Iteration und Zustandserfassung
     mallocstat_hole_iterate(test_callback);
