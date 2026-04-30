@@ -72,6 +72,10 @@ __attribute__((constructor)) void start_malloc_profiler(void) {
 }
 
 void get_hole_status(int is_empty, int is_resident) {
+  if (is_resident == -1) {
+    write_str("NULL", fd_slots);
+    return;
+  }
   if (is_empty && is_resident) {
     write_str("WASTED", fd_slots);
   } else if (!is_empty && is_resident) {
@@ -129,9 +133,9 @@ void mallocstat(void) {
 
         // 1. Is the slot empty according to mallocng?
         int is_empty = (unused_mask & (1U << j)) != 0;
-        if (!is_empty) {
-          continue;
-        }
+        /* if (!is_empty) { */
+        /*   continue; */
+        /* } */
 
         // TODO: better differentiation, to which pages a slot belongs to
         // - Also mincore body_addr instead of page_addr, page_addr is not
@@ -172,7 +176,7 @@ void mallocstat(void) {
             (page_floor(body_end) - page_floor(body_start)) / 4096;
         n_body_page += 1;
 
-        int is_resident_h = 0;
+        int is_resident_h = -1;
         if (head_size_b != 0) {
           if (mincore((void *)page_floor(head_start), 4096, page_vec) == 0) {
             is_resident_h = page_vec[0] & 1;
@@ -186,7 +190,7 @@ void mallocstat(void) {
             n_phys_body += page_vec[pg_i] & 1;
           }
         }
-        int is_resident_t = 0;
+        int is_resident_t = -1;
         if (tail_size_b != 0) {
           if (mincore((void *)page_floor(tail_end), 4096, page_vec) == 0) {
             is_resident_t = page_vec[0] & 1;
@@ -202,17 +206,28 @@ void mallocstat(void) {
         write_str(",", fd_slots);
         write_int(slot_size, fd_slots);
         write_str(",", fd_slots);
+
         write_hex(body_start, fd_slots);
         write_str(",", fd_slots);
         write_int(n_phys_body, fd_slots);
         write_str(",", fd_slots);
         write_int(n_body_page, fd_slots);
         write_str(",", fd_slots);
-        write_hex(page_floor(head_start), fd_slots);
+
+        if (head_size_b == 0) {
+          write_hex(0, fd_slots);
+        } else {
+          write_hex(page_floor(head_start), fd_slots);
+        }
         write_str(",", fd_slots);
         get_hole_status(is_empty, is_resident_h);
         write_str(",", fd_slots);
-        write_hex(page_floor(tail_end), fd_slots);
+
+        if (tail_size_b == 0) {
+          write_hex(0, fd_slots);
+        } else {
+          write_hex(page_floor(tail_end), fd_slots);
+        }
         write_str(",", fd_slots);
         get_hole_status(is_empty, is_resident_t);
         write_str("\n", fd_slots);

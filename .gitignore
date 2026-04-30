@@ -4,3 +4,4 @@
 config.mak
 .cache/
 compile_commands.json
+/test/main
