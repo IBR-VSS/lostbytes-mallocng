@@ -91,6 +91,101 @@ static uint32_t sample_id = 0;
 
 static unsigned char page_vec[4096];
 
+static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
+    uintptr_t hole_end = hole_start + hole_len - 1;
+    
+    uintptr_t head_end = page_ceil(hole_start);
+    uintptr_t tail_start = page_floor(hole_end);
+
+    size_t head_size_b;
+    size_t tail_size_b;
+
+    uintptr_t body_start = hole_start;
+    uintptr_t body_end = hole_end;
+    if (head_end >= tail_start ||
+        (is_page_aligned(head_end) && is_page_aligned(hole_len))) {
+        // Only body
+        head_size_b = 0;
+        tail_size_b = 0;
+    } else {
+        head_size_b = head_size(hole_start);
+        tail_size_b = tail_size(hole_end);
+        body_start = head_end;
+        body_end = tail_start - 1;
+    }
+
+    // 3. Ask the kernel if this page is backed by physical RAM
+
+    uintptr_t head_start = hole_start;
+    uintptr_t tail_end = hole_end;
+
+    size_t n_body_page =
+        (page_floor(body_end) - page_floor(body_start)) / 4096;
+    n_body_page += 1;
+
+    int is_resident_h = -1;
+    if (head_size_b != 0) {
+        if (mincore((void *)page_floor(head_start), 4096, page_vec) == 0) {
+            is_resident_h = page_vec[0] & 1;
+        }
+    }
+    int n_phys_body = 0;
+    size_t body_pglen = n_body_page * 4096;
+    if (mincore((void *)page_floor(body_start), body_pglen, page_vec) ==
+        0) {
+        for (size_t pg_i = 0; pg_i < n_body_page; pg_i++) {
+            n_phys_body += page_vec[pg_i] & 1;
+        }
+    }
+    int is_resident_t = -1;
+    if (tail_size_b != 0) {
+        if (mincore((void *)page_floor(tail_end), 4096, page_vec) == 0) {
+            is_resident_t = page_vec[0] & 1;
+        }
+    }
+
+    // Write CSV
+    write_int(counter_ms, fd_slots);
+    write_str(",", fd_slots);
+    // FIXME: Do we need this?!
+    // write_hex(groupaddr, fd_slots);
+    // write_str(",", fd_slots);
+
+    // FIXME: Do we need this?
+    // write_int(j, fd_slots);
+    // write_str(",", fd_slots);
+    write_int(hole_len, fd_slots);
+    write_str(",", fd_slots);
+
+    write_hex(body_start, fd_slots);
+    write_str(",", fd_slots);
+    write_int(n_phys_body, fd_slots);
+    write_str(",", fd_slots);
+    write_int(n_body_page, fd_slots);
+    write_str(",", fd_slots);
+
+    if (head_size_b == 0) {
+        write_hex(0, fd_slots);
+    } else {
+        write_hex(page_floor(head_start), fd_slots);
+    }
+    write_str(",", fd_slots);
+
+    // FIXME: What is this?
+    // get_hole_status(is_empty, is_resident_h);
+    // write_str(",", fd_slots);
+
+    if (tail_size_b == 0) {
+        write_hex(0, fd_slots);
+    } else {
+        write_hex(page_floor(tail_end), fd_slots);
+    }
+    write_str(",", fd_slots);
+    // FIXME: What is this?
+    // get_hole_status(is_empty, is_resident_t);
+    write_str("\n", fd_slots);
+}
+
 // 3. The Profiler
 void mallocstat(void) {
   counter_ms += TIMER_INTERVAL_US / 1000;
@@ -144,93 +239,7 @@ void mallocstat(void) {
         // 2. Find the slot's address and align it to 4KB for mincore
         uintptr_t slot_addr = groupaddr + (j * slot_size);
 
-        uintptr_t slot_start = slot_addr;
-        uintptr_t slot_end = slot_addr + slot_size - 1;
-
-        uintptr_t head_end = page_ceil(slot_start);
-        uintptr_t tail_start = page_floor(slot_end);
-
-        size_t head_size_b;
-        size_t tail_size_b;
-
-        uintptr_t body_start = slot_start;
-        uintptr_t body_end = slot_end;
-        if (head_end >= tail_start ||
-            (is_page_aligned(head_end) && is_page_aligned(slot_size))) {
-          // Only body
-          head_size_b = 0;
-          tail_size_b = 0;
-        } else {
-          head_size_b = head_size(slot_start);
-          tail_size_b = tail_size(slot_end);
-          body_start = head_end;
-          body_end = tail_start - 1;
-        }
-
-        // 3. Ask the kernel if this page is backed by physical RAM
-
-        uintptr_t head_start = slot_start;
-        uintptr_t tail_end = slot_end;
-
-        size_t n_body_page =
-            (page_floor(body_end) - page_floor(body_start)) / 4096;
-        n_body_page += 1;
-
-        int is_resident_h = -1;
-        if (head_size_b != 0) {
-          if (mincore((void *)page_floor(head_start), 4096, page_vec) == 0) {
-            is_resident_h = page_vec[0] & 1;
-          }
-        }
-        int n_phys_body = 0;
-        size_t body_pglen = n_body_page * 4096;
-        if (mincore((void *)page_floor(body_start), body_pglen, page_vec) ==
-            0) {
-          for (size_t pg_i = 0; pg_i < n_body_page; pg_i++) {
-            n_phys_body += page_vec[pg_i] & 1;
-          }
-        }
-        int is_resident_t = -1;
-        if (tail_size_b != 0) {
-          if (mincore((void *)page_floor(tail_end), 4096, page_vec) == 0) {
-            is_resident_t = page_vec[0] & 1;
-          }
-        }
-
-        // Write CSV
-        write_int(counter_ms, fd_slots);
-        write_str(",", fd_slots);
-        write_hex(groupaddr, fd_slots);
-        write_str(",", fd_slots);
-        write_int(j, fd_slots);
-        write_str(",", fd_slots);
-        write_int(slot_size, fd_slots);
-        write_str(",", fd_slots);
-
-        write_hex(body_start, fd_slots);
-        write_str(",", fd_slots);
-        write_int(n_phys_body, fd_slots);
-        write_str(",", fd_slots);
-        write_int(n_body_page, fd_slots);
-        write_str(",", fd_slots);
-
-        if (head_size_b == 0) {
-          write_hex(0, fd_slots);
-        } else {
-          write_hex(page_floor(head_start), fd_slots);
-        }
-        write_str(",", fd_slots);
-        get_hole_status(is_empty, is_resident_h);
-        write_str(",", fd_slots);
-
-        if (tail_size_b == 0) {
-          write_hex(0, fd_slots);
-        } else {
-          write_hex(page_floor(tail_end), fd_slots);
-        }
-        write_str(",", fd_slots);
-        get_hole_status(is_empty, is_resident_t);
-        write_str("\n", fd_slots);
+        mallocstat_hole_report(slot_addr, slot_size);
       }
 
       for (size_t j = 0; j < m->maplen; j++) {
@@ -247,6 +256,10 @@ void mallocstat(void) {
     }
     ma = ma->next;
   }
+
+  mallocstat_hole_iterate(mallocstat_hole_callback);
+  mallocstat_hole_reset();
+
   write_int(counter_ms, fd_pages);
   write_str(",", fd_pages);
   write_int(n_phys, fd_pages);
