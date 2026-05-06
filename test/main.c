@@ -19,7 +19,7 @@ int ptr_add(struct ptr_arr *pa, void *p) {
   return 0;
 }
 
-#define SIZE 4096 * 6
+#define SIZE 4096 * 2
 void allocmems() {
   for (size_t i = 0; i < 15; i++) {
     char *p = malloc(SIZE);
