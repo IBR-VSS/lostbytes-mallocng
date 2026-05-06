@@ -28,8 +28,6 @@ Das Iterate ruft für jedes verschmolzene Loch einen callback auf.
 #define REPORT
 #endif
 
-#define REPORT
-
 namespace {
     // Basisklasse zur zentralen Verwaltung der mmap-Chunks und Typ-übergreifenden Free-Lists
     struct MmapAllocatorState {
