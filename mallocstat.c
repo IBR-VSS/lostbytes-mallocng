@@ -19,7 +19,7 @@ const uint16_t scs[] = {
     1169, 1364, 1637, 2047, 2340, 2730, 3276, 4095, 4680, 5460, 6552, 8191};
 
 static uint64_t counter_ms = 0;
-#define TIMER_INTERVAL_US 1000000
+#define TIMER_INTERVAL_US 400000
 
 static int fd_slots = -1;
 static int fd_pages = -1;
