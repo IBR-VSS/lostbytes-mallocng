@@ -22,6 +22,7 @@ static uint64_t counter_ms = 0;
 #define TIMER_INTERVAL_US 400000
 
 static int fd_slots = -1;
+static int fd_subholes = -1;
 static int fd_pages = -1;
 
 void mallocstat(void);
@@ -61,6 +62,8 @@ void *profiler_thread(void *arg) {
 __attribute__((constructor)) void start_malloc_profiler(void) {
     fd_slots = open("slots.csv", O_CREAT | O_WRONLY | O_TRUNC, 0664);
     assert(fd_slots != -1);
+    fd_subholes = open("subholes.csv", O_CREAT | O_WRONLY | O_TRUNC, 0664);
+    assert(fd_subholes != -1);
     fd_pages = open("pages.csv", O_CREAT | O_WRONLY | O_TRUNC, 0664);
     assert(fd_pages != -1);
 
@@ -92,6 +95,55 @@ static uint32_t sample_id = 0;
 
 static unsigned char page_vec[4096];
 
+static void _subhole_callback(uintptr_t pgaddr, uintptr_t hole_start, size_t hole_len) {
+    unsigned char vec;
+    int subhole_status = 0;
+
+    if (mincore((void *)pgaddr, 4096, &vec) == 0) {
+        subhole_status = vec & 1;
+    }
+
+    if (subhole_status) {
+        write_int(counter_ms, fd_subholes);
+        write_str(",", fd_subholes);
+        write_hex(pgaddr, fd_subholes);
+        write_str(",", fd_subholes);
+        write_hex(hole_start, fd_subholes);
+        write_str(",", fd_subholes);
+        write_int(hole_len, fd_subholes);
+        write_str("\n", fd_subholes);
+    }
+}
+
+// Write to subhole fd
+// 2 Cases:
+//   1. Subhole in one page
+//   2. Subhole in two pages. If subhole is in two pages,
+//      split into two subholes
+static void subhole_callback(uintptr_t hole_start, size_t hole_len) {
+    uintptr_t hole_end = hole_start + hole_len - 1;
+    uintptr_t pgaddr_start = page_floor(hole_start);
+    uintptr_t pgaddr_end = page_floor(hole_end);
+
+    if (pgaddr_start == pgaddr_end) {
+        // Case 1
+        _subhole_callback(pgaddr_start, hole_start, hole_len);
+    } else {
+        // Case 2
+        uintptr_t pgaddrs[2] = {pgaddr_start, pgaddr_end};
+        uintptr_t starts[2] = {hole_start, pgaddr_end};
+        size_t lens[2] = {pgaddr_end - 1 - hole_start, hole_end - pgaddr_end};
+
+        for (size_t i = 0; i < 2; i++) {
+            uintptr_t pgaddr = pgaddrs[i];
+            uintptr_t start = starts[i];
+            size_t len = lens[i];
+            hole_start = pgaddr_end;
+            _subhole_callback(pgaddr, start, len);
+        }
+    }
+}
+
 static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
     uintptr_t hole_end = hole_start + hole_len - 1;
 
@@ -103,11 +155,13 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
 
     uintptr_t body_start = hole_start;
     uintptr_t body_end = hole_end;
-    if (head_end >= tail_start ||
-        (is_page_aligned(head_end) && is_page_aligned(hole_len))) {
+    if (is_page_aligned(head_end) && is_page_aligned(hole_len)) {
         // Only body
         head_size_b = 0;
         tail_size_b = 0;
+    } else if (head_end >= tail_start) {
+        subhole_callback(hole_start, hole_len);
+        return;
     } else {
         head_size_b = head_size(hole_start);
         tail_size_b = tail_size(hole_end);
@@ -123,12 +177,13 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
     size_t n_body_page = (page_floor(body_end) - page_floor(body_start)) / 4096;
     n_body_page += 1;
 
-    int is_resident_h = -1;
-    if (head_size_b != 0) {
-        if (mincore((void *)page_floor(head_start), 4096, page_vec) == 0) {
-            is_resident_h = page_vec[0] & 1;
-        }
-    }
+    // FIXME: Do i need this?
+    // int is_resident_h = -1;
+    // if (head_size_b != 0) {
+    //     if (mincore((void *)page_floor(head_start), 4096, page_vec) == 0) {
+    //         is_resident_h = page_vec[0] & 1;
+    //     }
+    // }
     int n_phys_body = 0;
     size_t body_pglen = n_body_page * 4096;
     if (mincore((void *)page_floor(body_start), body_pglen, page_vec) == 0) {
@@ -136,12 +191,13 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
             n_phys_body += page_vec[pg_i] & 1;
         }
     }
-    int is_resident_t = -1;
-    if (tail_size_b != 0) {
-        if (mincore((void *)page_floor(tail_end), 4096, page_vec) == 0) {
-            is_resident_t = page_vec[0] & 1;
-        }
-    }
+    // FIXME: Do i need this?
+    // int is_resident_t = -1;
+    // if (tail_size_b != 0) {
+    //     if (mincore((void *)page_floor(tail_end), 4096, page_vec) == 0) {
+    //         is_resident_t = page_vec[0] & 1;
+    //     }
+    // }
 
     // Write CSV
     write_int(counter_ms, fd_slots);
@@ -191,6 +247,7 @@ void mallocstat(void) {
             "counter_ms,slotsize,pageaddr_body,n_phys_body,"
             "n_virt_body,pageaddr_head,head_size,pageaddr_tail,tail_size\n",
             fd_slots);
+        write_str("counter_ms,pageaddr,start,len\n", fd_subholes);
         write_str("counter_ms,n_phys\n", fd_pages);
     }
 
