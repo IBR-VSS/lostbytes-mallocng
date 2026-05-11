@@ -178,12 +178,12 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
     n_body_page += 1;
 
     // FIXME: Do i need this?
-    // int is_resident_h = -1;
-    // if (head_size_b != 0) {
-    //     if (mincore((void *)page_floor(head_start), 4096, page_vec) == 0) {
-    //         is_resident_h = page_vec[0] & 1;
-    //     }
-    // }
+    int is_resident_h = -1;
+    if (head_size_b != 0) {
+        if (mincore((void *)page_floor(head_start), 4096, page_vec) == 0) {
+            is_resident_h = page_vec[0] & 1;
+        }
+    }
     int n_phys_body = 0;
     size_t body_pglen = n_body_page * 4096;
     if (mincore((void *)page_floor(body_start), body_pglen, page_vec) == 0) {
@@ -192,12 +192,12 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
         }
     }
     // FIXME: Do i need this?
-    // int is_resident_t = -1;
-    // if (tail_size_b != 0) {
-    //     if (mincore((void *)page_floor(tail_end), 4096, page_vec) == 0) {
-    //         is_resident_t = page_vec[0] & 1;
-    //     }
-    // }
+    int is_resident_t = -1;
+    if (tail_size_b != 0) {
+        if (mincore((void *)page_floor(tail_end), 4096, page_vec) == 0) {
+            is_resident_t = page_vec[0] & 1;
+        }
+    }
 
     // Write CSV
     write_int(counter_ms, fd_slots);
@@ -218,6 +218,9 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
         write_hex(page_floor(head_start), fd_slots);
     }
     write_str(",", fd_slots);
+    if (!is_resident_h) {
+      head_size_b = 0;
+    }
     write_int(head_size_b, fd_slots);
     write_str(",", fd_slots);
 
@@ -231,6 +234,9 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
         write_hex(page_floor(tail_end), fd_slots);
     }
     write_str(",", fd_slots);
+    if (!is_resident_t) {
+      tail_size_b = 0;
+    }
     write_int(tail_size_b, fd_slots);
     // FIXME: Check if incore
     // get_hole_status(is_empty, is_resident_t);
