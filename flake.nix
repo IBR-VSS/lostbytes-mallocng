@@ -5,24 +5,21 @@
     nixpkgs.url = "nixpkgs/nixos-unstable";
   };
 
-  outputs =
-    {
-      self,
-      flake-utils,
-      nixpkgs,
-    }:
+  outputs = {
+    self,
+    flake-utils,
+    nixpkgs,
+  }:
     flake-utils.lib.eachDefaultSystem (
-      system:
-      let
+      system: let
         pkgs = nixpkgs.legacyPackages.${system};
-      in
-      {
-        devShell =
-          with pkgs;
+      in {
+        devShell = with pkgs;
           mkShell {
             packages = [
               clang-tools
               bear
+              gnumake
             ];
           };
       }
