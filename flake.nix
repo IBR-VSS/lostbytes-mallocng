@@ -5,22 +5,39 @@
     nixpkgs.url = "nixpkgs/nixos-unstable";
   };
 
-  outputs = {
-    self,
-    flake-utils,
-    nixpkgs,
-  }:
+  outputs =
+    {
+      self,
+      flake-utils,
+      nixpkgs,
+    }:
     flake-utils.lib.eachDefaultSystem (
-      system: let
+      system:
+      let
         pkgs = nixpkgs.legacyPackages.${system};
-      in {
-        devShell = with pkgs;
+      in
+      {
+        packages.default =
+          with pkgs;
+          stdenv.mkDerivation {
+            name = "mallocng-lit";
+            src = ./.;
+            nativeBuildInputs = [
+              gnumake
+            ];
+            installPhase = ''
+              mkdir -p $out
+              cp libmallocng.so $out
+            '';
+          };
+        devShell =
+          with pkgs;
           mkShell {
             packages = [
               clang-tools
               bear
-              gnumake
             ];
+            inputsFrom = [ self.packages.${system}.default ];
           };
       }
     );
