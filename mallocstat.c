@@ -19,7 +19,7 @@ const uint16_t scs[] = {
     1169, 1364, 1637, 2047, 2340, 2730, 3276, 4095, 4680, 5460, 6552, 8191};
 
 static uint64_t counter_ms = 0;
-#define TIMER_INTERVAL_US 400000
+#define TIMER_INTERVAL_US 1000000
 
 static int fd_slots = -1;
 static int fd_subholes = -1;
@@ -95,7 +95,8 @@ static uint32_t sample_id = 0;
 
 static unsigned char page_vec[4096];
 
-static void _subhole_callback(uintptr_t pgaddr, uintptr_t hole_start, size_t hole_len) {
+static void _subhole_callback(uintptr_t pgaddr, uintptr_t hole_start,
+                              size_t hole_len) {
     unsigned char vec;
     int subhole_status = 0;
 
@@ -219,7 +220,7 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
     }
     write_str(",", fd_slots);
     if (!is_resident_h) {
-      head_size_b = 0;
+        head_size_b = 0;
     }
     write_int(head_size_b, fd_slots);
     write_str(",", fd_slots);
@@ -235,7 +236,7 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
     }
     write_str(",", fd_slots);
     if (!is_resident_t) {
-      tail_size_b = 0;
+        tail_size_b = 0;
     }
     write_int(tail_size_b, fd_slots);
     // FIXME: Check if incore
