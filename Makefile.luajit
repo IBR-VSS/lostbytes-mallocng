@@ -1,0 +1,38 @@
+# Configuration
+LUAJIT_REPO = https://github.com/LuaJIT/LuaJIT.git
+LUAJIT_BRANCH = v2.1
+LUAJIT_DIR = luajit
+LUAJIT_BIN = $(LUAJIT_DIR)/src/luajit
+XCFLAGS = -DLUAJIT_ENABLE_GC64 -DLUAJIT_USE_SYSMALLOC
+
+TEST_SCRIPT = luajit-test.lua
+
+.PHONY: all clean test help luajit-source
+
+all: $(LUAJIT_BIN) 
+
+help:
+	@echo "Available targets:"
+	@echo "  all        - Build LuaJIT"
+	@echo "  test       - Run the verification test"
+	@echo "  clean      - Remove build artifacts"
+	@echo "  distclean  - Remove everything including LuaJIT source"
+
+# 1. Fetch LuaJIT source
+$(LUAJIT_DIR):
+	@echo "Cloning LuaJIT repository..."
+	git clone $(LUAJIT_REPO) $(LUAJIT_DIR)
+	cd $(LUAJIT_DIR) && git checkout $(LUAJIT_BRANCH)
+
+# 2. Compile LuaJIT
+$(LUAJIT_BIN): $(LUAJIT_DIR)
+	@echo "Building LuaJIT with SYSMALLOC and GC64..."
+	$(MAKE) -C $(LUAJIT_DIR) -j$$(nproc) XCFLAGS="$(XCFLAGS)"
+
+# 4. Verification
+test: all
+	@echo "Running verification test..."
+	LD_PRELOAD=./libmallocng.so ./$(LUAJIT_BIN) $(TEST_SCRIPT)
+
+distclean: clean
+	rm -rf $(LUAJIT_DIR)
