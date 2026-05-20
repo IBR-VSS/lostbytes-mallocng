@@ -178,7 +178,6 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
     size_t n_body_page = (page_floor(body_end) - page_floor(body_start)) / 4096;
     n_body_page += 1;
 
-    // FIXME: Do i need this?
     int is_resident_h = -1;
     if (head_size_b != 0) {
         if (mincore((void *)page_floor(head_start), 4096, page_vec) == 0) {
@@ -192,7 +191,6 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
             n_phys_body += page_vec[pg_i] & 1;
         }
     }
-    // FIXME: Do i need this?
     int is_resident_t = -1;
     if (tail_size_b != 0) {
         if (mincore((void *)page_floor(tail_end), 4096, page_vec) == 0) {
@@ -225,10 +223,6 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
     write_int(head_size_b, fd_slots);
     write_str(",", fd_slots);
 
-    // FIXME: Check if incore
-    // get_hole_status(is_empty, is_resident_h);
-    // write_str(",", fd_slots);
-
     if (tail_size_b == 0) {
         write_hex(0, fd_slots);
     } else {
@@ -239,8 +233,6 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
         tail_size_b = 0;
     }
     write_int(tail_size_b, fd_slots);
-    // FIXME: Check if incore
-    // get_hole_status(is_empty, is_resident_t);
     write_str("\n", fd_slots);
 }
 
