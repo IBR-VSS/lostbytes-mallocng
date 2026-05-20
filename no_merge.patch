@@ -1,0 +1,15 @@
+diff --git a/mallocstat_intervals.cc b/mallocstat_intervals.cc
+index 1459c8a..de2f855 100644
+--- a/mallocstat_intervals.cc
++++ b/mallocstat_intervals.cc
+@@ -211,8 +211,8 @@ void mallocstat_hole_report(uintptr_t addr, size_t length) {
+     auto prev = (it != holes.begin()) ? std::prev(it) : holes.end();
+ 
+     // Prüfe auf Adjazenz zu benachbarten Intervallen
+-    bool merges_left = (prev != holes.end()) && (prev->first + prev->second == addr);
+-    bool merges_right = (it != holes.end()) && (addr + length == it->first);
++    bool merges_left = false;
++    bool merges_right = false;
+ 
+     if (merges_left && merges_right) {
+         // Verschmelzung in beide Richtungen: Linkes Intervall erweitern, rechtes löschen
