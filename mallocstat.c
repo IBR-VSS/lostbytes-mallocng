@@ -96,7 +96,7 @@ static uint32_t sample_id = 0;
 static unsigned char page_vec[4096];
 
 static void _subhole_callback(uintptr_t pgaddr, uintptr_t hole_start,
-                              size_t hole_len) {
+                              size_t hole_len, int is_merged) {
     unsigned char vec;
     int subhole_status = 0;
 
@@ -112,6 +112,8 @@ static void _subhole_callback(uintptr_t pgaddr, uintptr_t hole_start,
         write_hex(hole_start, fd_subholes);
         write_str(",", fd_subholes);
         write_int(hole_len, fd_subholes);
+        write_str(",", fd_subholes);
+        write_int(is_merged, fd_subholes);
         write_str("\n", fd_subholes);
     }
 }
@@ -121,14 +123,15 @@ static void _subhole_callback(uintptr_t pgaddr, uintptr_t hole_start,
 //   1. Subhole in one page
 //   2. Subhole in two pages. If subhole is in two pages,
 //      split into two subholes
-static void subhole_callback(uintptr_t hole_start, size_t hole_len) {
+static void subhole_callback(uintptr_t hole_start, size_t hole_len,
+                             int is_merged) {
     uintptr_t hole_end = hole_start + hole_len - 1;
     uintptr_t pgaddr_start = page_floor(hole_start);
     uintptr_t pgaddr_end = page_floor(hole_end);
 
     if (pgaddr_start == pgaddr_end) {
         // Case 1
-        _subhole_callback(pgaddr_start, hole_start, hole_len);
+        _subhole_callback(pgaddr_start, hole_start, hole_len, is_merged);
     } else {
         // Case 2
         uintptr_t pgaddrs[2] = {pgaddr_start, pgaddr_end};
@@ -140,12 +143,13 @@ static void subhole_callback(uintptr_t hole_start, size_t hole_len) {
             uintptr_t start = starts[i];
             size_t len = lens[i];
             hole_start = pgaddr_end;
-            _subhole_callback(pgaddr, start, len);
+            _subhole_callback(pgaddr, start, len, is_merged);
         }
     }
 }
 
-static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
+static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len,
+                                     int is_merged) {
     uintptr_t hole_end = hole_start + hole_len - 1;
 
     uintptr_t head_end = page_ceil(hole_start);
@@ -161,7 +165,7 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
         head_size_b = 0;
         tail_size_b = 0;
     } else if (head_end >= tail_start) {
-        subhole_callback(hole_start, hole_len);
+        subhole_callback(hole_start, hole_len, is_merged);
         return;
     } else {
         head_size_b = head_size(hole_start);
@@ -233,6 +237,9 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len) {
         tail_size_b = 0;
     }
     write_int(tail_size_b, fd_slots);
+
+    write_str(",", fd_slots);
+    write_int(is_merged, fd_slots);
     write_str("\n", fd_slots);
 }
 
@@ -242,11 +249,11 @@ void mallocstat(void) {
 
     if (sample_id == 0) {
         // CSV Header
-        write_str(
-            "counter_ms,slotsize,pageaddr_body,n_phys_body,"
-            "n_virt_body,pageaddr_head,head_size,pageaddr_tail,tail_size\n",
-            fd_slots);
-        write_str("counter_ms,pageaddr,start,len\n", fd_subholes);
+        write_str("counter_ms,slotsize,pageaddr_body,n_phys_body,"
+                  "n_virt_body,pageaddr_head,head_size,pageaddr_tail,tail_size,"
+                  "merged\n",
+                  fd_slots);
+        write_str("counter_ms,pageaddr,start,len,merged\n", fd_subholes);
         write_str("counter_ms,n_phys\n", fd_pages);
     }
 
@@ -297,6 +304,7 @@ void mallocstat(void) {
                 print_hex(slot_addr);
                 print_str("\n");
 #endif
+                mallocstat_hole_callback(slot_addr, slot_size, 0);
                 mallocstat_hole_report(slot_addr, slot_size);
             }
 

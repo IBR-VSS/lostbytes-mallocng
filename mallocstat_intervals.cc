@@ -237,14 +237,14 @@ void mallocstat_hole_report(uintptr_t addr, size_t length) {
 #endif
 }
 
-void mallocstat_hole_iterate(void (*callback)(uintptr_t, size_t)) {
+void mallocstat_hole_iterate(void (*callback)(uintptr_t, size_t, int)) {
     if (!callback) {
         return;
     }
 
     std::lock_guard<std::mutex> lock(map_mutex);
     for (const auto& [addr, length] : holes) {
-        callback(addr, length);
+      callback(addr, length, 1);
     }
 }
 
@@ -263,7 +263,8 @@ namespace {
     std::vector<std::pair<uintptr_t, size_t>> test_results;
 }
 
-extern "C" void test_callback(uintptr_t start, size_t length) {
+extern "C" void test_callback(uintptr_t start, size_t length, int x) {
+    (void) x;
     test_results.emplace_back(start, length);
 }
 
