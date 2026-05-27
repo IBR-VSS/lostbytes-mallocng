@@ -264,7 +264,7 @@ void mallocstat(void) {
         // CSV Header
         write_str("counter_ms,slotsize,pageaddr_body,n_phys_body,"
                   "n_virt_body,pageaddr_head,head_size,head_size_freed,"
-                  "pageaddr_tail,tail_size,tail_size_freed"
+                  "pageaddr_tail,tail_size,tail_size_freed,"
                   "merged\n",
                   fd_slots);
         write_str("counter_ms,pageaddr,start,len,len_freed,merged\n",
