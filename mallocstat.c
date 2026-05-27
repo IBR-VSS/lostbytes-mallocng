@@ -290,13 +290,6 @@ void mallocstat(void) {
                     continue;
                 }
 
-                // TODO: better differentiation, to which pages a slot belongs
-                // to
-                // - Also mincore body_addr instead of page_addr, page_addr is
-                // not
-                //   really correct
-
-                // 2. Find the slot's address and align it to 4KB for mincore
                 uintptr_t slot_addr = groupaddr + (j * slot_size);
 
 #ifdef TEST
