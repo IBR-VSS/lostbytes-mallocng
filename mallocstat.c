@@ -99,23 +99,28 @@ static void _subhole_callback(uintptr_t pgaddr, uintptr_t hole_start,
                               size_t hole_len, int is_merged) {
     unsigned char vec;
     int subhole_status = 0;
+    size_t hole_len_freed = 0;
 
     if (mincore((void *)pgaddr, 4096, &vec) == 0) {
         subhole_status = vec & 1;
     }
 
-    if (subhole_status) {
-        write_int(counter_ms, fd_subholes);
-        write_str(",", fd_subholes);
-        write_hex(pgaddr, fd_subholes);
-        write_str(",", fd_subholes);
-        write_hex(hole_start, fd_subholes);
-        write_str(",", fd_subholes);
-        write_int(hole_len, fd_subholes);
-        write_str(",", fd_subholes);
-        write_int(is_merged, fd_subholes);
-        write_str("\n", fd_subholes);
+    write_int(counter_ms, fd_subholes);
+    write_str(",", fd_subholes);
+    write_hex(pgaddr, fd_subholes);
+    write_str(",", fd_subholes);
+    write_hex(hole_start, fd_subholes);
+    write_str(",", fd_subholes);
+    if (!subhole_status) {
+        hole_len_freed = hole_len;
+        hole_len = 0;
     }
+    write_int(hole_len, fd_subholes);
+    write_str(",", fd_subholes);
+    write_int(hole_len_freed, fd_subholes);
+    write_str(",", fd_subholes);
+    write_int(is_merged, fd_subholes);
+    write_str("\n", fd_subholes);
 }
 
 // Write to subhole fd
@@ -157,6 +162,8 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len,
 
     size_t head_size_b;
     size_t tail_size_b;
+    size_t head_size_freed_b = 0;
+    size_t tail_size_freed_b = 0;
 
     uintptr_t body_start = hole_start;
     uintptr_t body_end = hole_end;
@@ -222,9 +229,12 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len,
     }
     write_str(",", fd_slots);
     if (!is_resident_h) {
+        head_size_freed_b = head_size_b;
         head_size_b = 0;
     }
     write_int(head_size_b, fd_slots);
+    write_str(",", fd_slots);
+    write_int(head_size_freed_b, fd_slots);
     write_str(",", fd_slots);
 
     if (tail_size_b == 0) {
@@ -234,11 +244,14 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len,
     }
     write_str(",", fd_slots);
     if (!is_resident_t) {
+        tail_size_freed_b = 0;
         tail_size_b = 0;
     }
     write_int(tail_size_b, fd_slots);
-
     write_str(",", fd_slots);
+    write_int(tail_size_freed_b, fd_slots);
+    write_str(",", fd_slots);
+
     write_int(is_merged, fd_slots);
     write_str("\n", fd_slots);
 }
@@ -250,10 +263,12 @@ void mallocstat(void) {
     if (sample_id == 0) {
         // CSV Header
         write_str("counter_ms,slotsize,pageaddr_body,n_phys_body,"
-                  "n_virt_body,pageaddr_head,head_size,pageaddr_tail,tail_size,"
+                  "n_virt_body,pageaddr_head,head_size,head_size_freed,"
+                  "pageaddr_tail,tail_size,tail_size_freed"
                   "merged\n",
                   fd_slots);
-        write_str("counter_ms,pageaddr,start,len,merged\n", fd_subholes);
+        write_str("counter_ms,pageaddr,start,len,len_freed,merged\n",
+                  fd_subholes);
         write_str("counter_ms,n_phys\n", fd_pages);
     }
 
