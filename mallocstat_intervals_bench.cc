@@ -57,7 +57,11 @@ int main() {
     std::vector<uintptr_t> addrs(benchmark_addresses_set.begin(),
                                  benchmark_addresses_set.end());
     // std::sort(addrs.begin(), addrs.end(), std::greater<int>());
-
+    unsigned round = 0;
+again:
+    round += 1;
+    global_interval_count = 0;
+    global_size =0;
     std::cout << "Starte Benchmark (" << NUM_INTERVALS << " Verschmelzungen)..." << std::endl;
 
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -106,5 +110,8 @@ int main() {
 
     // Bereinigung des Allokators
     mallocstat_hole_reset();
+
+    if (round < 10)
+        goto again;
     return 0;
 }
