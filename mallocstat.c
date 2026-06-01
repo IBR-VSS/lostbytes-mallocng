@@ -1,5 +1,4 @@
 #define _GNU_SOURCE
-
 #include <assert.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -8,9 +7,18 @@
 #include <stdio.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <time.h>
+
 
 #include "helper.h"
 #include "meta.h"
+
+#define PRINT(f, v) do { write_str(f ": ",1); write_hex((uintptr_t)(v),1); write_str("\n",1); } while(0);
+
+// #undef assert
+// #define assert_loc(f, l) #f ":" #l ":"
+// #define assert(cond) do { if (cond) {} else { write_str(assert_loc(__FILE__, __LINE__),2); write_str(#cond,2); write_str("\n", 2); _exit(-1);}} while (0)
 
 const uint16_t scs[] = {
     1,    2,    3,    4,    5,    6,    7,    8,    9,    10,   12,   15,
@@ -27,23 +35,37 @@ static int fd_pages = -1;
 
 void mallocstat(void);
 
-uintptr_t page_floor(uintptr_t p) { return p & ~4095UL; }
+static uintptr_t page_floor(uintptr_t p) { return p & ~4095UL; }
 
-uintptr_t page_ceil(uintptr_t p) { return (p + 4095) & ~4095UL; }
+static uintptr_t page_ceil(uintptr_t p) { return (p + 4095) & ~4095UL; }
 
-bool is_page_aligned(uintptr_t p) { return p % 4096 == 0; }
+static bool is_page_aligned(uintptr_t p) { return p % 4096 == 0; }
 
-size_t head_size(uintptr_t slot_start) {
+static size_t head_size(uintptr_t slot_start) {
     uintptr_t ceil = page_ceil(slot_start);
     return ceil - slot_start;
 }
 
-size_t tail_size(uintptr_t slot_end) {
+static size_t tail_size(uintptr_t slot_end) {
     uintptr_t floor = page_floor(slot_end);
     return slot_end - floor;
 }
 
-void *profiler_thread(void *arg) {
+static double time_delta(struct timespec *ts) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
+    double seconds = (double)(now.tv_sec - ts->tv_sec) + 
+        (double)(now.tv_nsec - ts->tv_nsec) / 1e9;
+
+    *ts = now;
+
+    return seconds;
+}
+
+
+
+static void *profiler_thread(void *arg) {
     while (1) {
         usleep(TIMER_INTERVAL_US);
         counter_ms += TIMER_INTERVAL_US / 1000;
@@ -57,13 +79,17 @@ void *profiler_thread(void *arg) {
         if (MT)
             __sync_lock_release(&malloc_lock, 0);
     }
+    return NULL;
 }
 
-__attribute__((constructor)) void start_malloc_profiler(void) {
-    fd_slots = open("slots.csv", O_CREAT | O_WRONLY | O_TRUNC, 0664);
-    assert(fd_slots != -1);
-    fd_subholes = open("subholes.csv", O_CREAT | O_WRONLY | O_TRUNC, 0664);
-    assert(fd_subholes != -1);
+__attribute__((constructor)) 
+static void start_malloc_profiler(void) {
+    
+    fd_slots = -1;
+    if (char *MALLOCSTAT_SLOTS = getenv("MALLOCSTAT_SLOTS")) {
+        fd_slots = open(MALLOCSTAT_SLOTS, O_CREAT | O_WRONLY | O_TRUNC, 0664);
+    }
+
     fd_pages = open("pages.csv", O_CREAT | O_WRONLY | O_TRUNC, 0664);
     assert(fd_pages != -1);
 
@@ -75,201 +101,176 @@ __attribute__((constructor)) void start_malloc_profiler(void) {
     }
 }
 
-void get_hole_status(int is_empty, int is_resident) {
-    if (is_resident == -1) {
-        write_str("NONE", fd_slots);
-        return;
-    }
-    if (is_empty && is_resident) {
-        write_str("WASTED", fd_slots);
-    } else if (!is_empty && is_resident) {
-        write_str("ACTIVE", fd_slots);
-    } else if (is_empty && !is_resident) {
-        write_str("IDLE", fd_slots);
-    } else if (!is_empty && !is_resident) {
-        write_str("SWAPPED", fd_slots);
-    }
-}
-
 static uint32_t sample_id = 0;
 
+static uintptr_t page_vec_addr;
+static size_t page_vec_len;
 static unsigned char page_vec[4096];
 
-static void _subhole_callback(uintptr_t pgaddr, uintptr_t hole_start,
-                              size_t hole_len, int is_merged) {
-    unsigned char vec;
-    int subhole_status = 0;
-    size_t hole_len_freed = 0;
-
-    if (mincore((void *)pgaddr, 4096, &vec) == 0) {
-        subhole_status = vec & 1;
-    }
-
-    write_int(counter_ms, fd_subholes);
-    write_str(",", fd_subholes);
-    write_hex(pgaddr, fd_subholes);
-    write_str(",", fd_subholes);
-    write_hex(hole_start, fd_subholes);
-    write_str(",", fd_subholes);
-    if (!subhole_status) {
-        hole_len_freed = hole_len;
-        hole_len = 0;
-    }
-    write_int(hole_len, fd_subholes);
-    write_str(",", fd_subholes);
-    write_int(hole_len_freed, fd_subholes);
-    write_str(",", fd_subholes);
-    write_int(is_merged, fd_subholes);
-    write_str("\n", fd_subholes);
+static int page_vec_mapped(uintptr_t addr) {
+    uintptr_t off = addr - (uintptr_t) page_vec_addr;
+    assert(addr >= (uintptr_t)page_vec_addr);
+    assert(off <= page_vec_len);
+    uintptr_t idx = off / 4096;
+    return (page_vec[idx] & 1);
 }
 
-// Write to subhole fd
-// 2 Cases:
-//   1. Subhole in one page
-//   2. Subhole in two pages. If subhole is in two pages,
-//      split into two subholes
-static void subhole_callback(uintptr_t hole_start, size_t hole_len,
-                             int is_merged) {
-    uintptr_t hole_end = hole_start + hole_len - 1;
-    uintptr_t pgaddr_start = page_floor(hole_start);
-    uintptr_t pgaddr_end = page_floor(hole_end);
-
-    if (pgaddr_start == pgaddr_end) {
-        // Case 1
-        _subhole_callback(pgaddr_start, hole_start, hole_len, is_merged);
-    } else {
-        // Case 2
-        uintptr_t pgaddrs[2] = {pgaddr_start, pgaddr_end};
-        uintptr_t starts[2] = {hole_start, pgaddr_end};
-        size_t lens[2] = {pgaddr_end - 1 - hole_start, hole_end - pgaddr_end};
-
-        for (size_t i = 0; i < 2; i++) {
-            uintptr_t pgaddr = pgaddrs[i];
-            uintptr_t start = starts[i];
-            size_t len = lens[i];
-            hole_start = pgaddr_end;
-            _subhole_callback(pgaddr, start, len, is_merged);
-        }
-    }
+static void page_vec_ensure(uintptr_t addr, size_t len) {
+    if (page_vec_addr <= addr
+        && (addr+len <= page_vec_addr+page_vec_len))
+        return;
+    
+    assert(len < sizeof(page_vec)*4096);
+    page_vec_addr = page_floor(addr);
+    page_vec_len  = page_ceil(addr+len)-page_vec_addr;
+    int rc = mincore((void*)page_vec_addr, page_vec_len , page_vec);
+    
+    assert(rc == 0);
 }
+
+// Statistics vector.
+struct hole_stat {
+    size_t hole_count;
+    
+    size_t head_size;
+    size_t head_size_freed;
+
+    size_t body_size;
+    size_t body_size_freed;
+    
+    size_t tail_size;
+    size_t tail_size_freed;
+
+    size_t subhole_size;
+    size_t subhole_size_freed;
+};
+
+static void mallocstat_hole_stat_print(struct hole_stat *stat, int fd) {
+#define PRINT_FIELD(name) do {                  \
+        write_str(",", fd);                      \
+        if (stat == NULL) {                      \
+            write_str(#name, fd);                \
+        } else {                                 \
+            write_hex(stat->name, fd);           \
+        }                                        \
+    }while(0)
+
+    PRINT_FIELD(hole_count);
+    PRINT_FIELD(head_size);
+    PRINT_FIELD(head_size_freed);
+    PRINT_FIELD(body_size);
+    PRINT_FIELD(body_size_freed);
+    PRINT_FIELD(tail_size);
+    PRINT_FIELD(tail_size_freed);
+    PRINT_FIELD(subhole_size);
+    PRINT_FIELD(subhole_size_freed);
+#undef PRINT_FIELD
+}
+
+static void mallocstat_hole_stat_acc(struct hole_stat *acc, struct hole_stat *rhs) {
+    acc->hole_count         += rhs->hole_count;
+    acc->head_size          += rhs->head_size;
+    acc->head_size_freed    += rhs->head_size_freed;
+    acc->body_size          += rhs->body_size;
+    acc->body_size_freed    += rhs->body_size_freed;
+    acc->tail_size          += rhs->tail_size;
+    acc->tail_size_freed    += rhs->tail_size_freed;
+    acc->subhole_size       += rhs->subhole_size;
+    acc->subhole_size_freed += rhs->subhole_size_freed;
+}
+
+
+struct hole_stat acc_merged_true, acc_merged_false;    
 
 static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len,
                                      int is_merged) {
     uintptr_t hole_end = hole_start + hole_len - 1;
 
-    uintptr_t head_end = page_ceil(hole_start);
-    uintptr_t tail_start = page_floor(hole_end);
-
-    size_t head_size_b;
-    size_t tail_size_b;
-    size_t head_size_freed_b = 0;
-    size_t tail_size_freed_b = 0;
+    struct hole_stat stat = {0};
+    stat.hole_count = 1;
 
     uintptr_t body_start = hole_start;
     uintptr_t body_end = hole_end;
-    if (is_page_aligned(head_end) && is_page_aligned(hole_len)) {
-        // Only body
-        head_size_b = 0;
-        tail_size_b = 0;
-    } else if (head_end >= tail_start) {
-        subhole_callback(hole_start, hole_len, is_merged);
-        return;
+
+    if (page_floor(hole_start) == page_floor(hole_end)
+        && page_floor(hole_start) != hole_start) {
+        stat.subhole_size = hole_len;
+        stat.subhole_size_freed = page_vec_mapped(hole_start) ? 0 : hole_len;
     } else {
-        head_size_b = head_size(hole_start);
-        tail_size_b = tail_size(hole_end);
-        body_start = head_end;
-        body_end = tail_start - 1;
-    }
-
-    // 3. Ask the kernel if this page is backed by physical RAM
-
-    uintptr_t head_start = hole_start;
-    uintptr_t tail_end = hole_end;
-
-    size_t n_body_page = (page_floor(body_end) - page_floor(body_start)) / 4096;
-    n_body_page += 1;
-
-    int is_resident_h = -1;
-    if (head_size_b != 0) {
-        if (mincore((void *)page_floor(head_start), 4096, page_vec) == 0) {
-            is_resident_h = page_vec[0] & 1;
+        // There is a head
+        if (!is_page_aligned(hole_start)) {
+            stat.head_size = head_size(hole_start);
+            stat.head_size_freed = page_vec_mapped(hole_start) ? 0 : stat.head_size;
+            body_start += stat.head_size;
         }
-    }
-    int n_phys_body = 0;
-    size_t body_pglen = n_body_page * 4096;
-    if (mincore((void *)page_floor(body_start), body_pglen, page_vec) == 0) {
-        for (size_t pg_i = 0; pg_i < n_body_page; pg_i++) {
-            n_phys_body += page_vec[pg_i] & 1;
+
+        // There is a tail
+        if (!is_page_aligned(hole_end)) {
+            stat.tail_size = tail_size(hole_end);
+            stat.tail_size_freed = page_vec_mapped(hole_end) ? 0 : stat.tail_size;
+            body_end -= stat.tail_size;
         }
-    }
-    int is_resident_t = -1;
-    if (tail_size_b != 0) {
-        if (mincore((void *)page_floor(tail_end), 4096, page_vec) == 0) {
-            is_resident_t = page_vec[0] & 1;
+
+        stat.body_size = body_end - body_start;
+        assert(body_end >= body_start);
+        for (uintptr_t p = body_start; p != body_end; p += 4096) {
+            if (!page_vec_mapped(p))
+                stat.body_size_freed += 4096;
         }
     }
 
     // Write CSV
-    write_int(counter_ms, fd_slots);
-    write_str(",", fd_slots);
-    write_int(hole_len, fd_slots);
-    write_str(",", fd_slots);
+    if (fd_slots != -1) {
+        write_int(counter_ms, fd_slots);
+    
+        write_str(",", fd_slots);
+        write_hex(hole_start, fd_slots);
+        
+        write_str(",", fd_slots);
+        write_int(hole_len, fd_slots);
+    
+        write_str(",", fd_slots);
+        write_int(is_merged, fd_slots);
+        
+        mallocstat_hole_stat_print(&stat, fd_slots);
+    
+        write_str("\n", fd_slots);
+    }
 
-    write_hex(body_start, fd_slots);
-    write_str(",", fd_slots);
-    write_int(n_phys_body, fd_slots);
-    write_str(",", fd_slots);
-    write_int(n_body_page, fd_slots);
-    write_str(",", fd_slots);
-
-    if (head_size_b == 0) {
-        write_hex(0, fd_slots);
+    // Accumulate for fd_pages
+    if (is_merged) {
+        mallocstat_hole_stat_acc(&acc_merged_true, &stat);
     } else {
-        write_hex(page_floor(head_start), fd_slots);
+        mallocstat_hole_stat_acc(&acc_merged_false, &stat);
     }
-    write_str(",", fd_slots);
-    if (!is_resident_h) {
-        head_size_freed_b = head_size_b;
-        head_size_b = 0;
-    }
-    write_int(head_size_b, fd_slots);
-    write_str(",", fd_slots);
-    write_int(head_size_freed_b, fd_slots);
-    write_str(",", fd_slots);
+}    
 
-    if (tail_size_b == 0) {
-        write_hex(0, fd_slots);
-    } else {
-        write_hex(page_floor(tail_end), fd_slots);
-    }
-    write_str(",", fd_slots);
-    if (!is_resident_t) {
-        tail_size_freed_b = 0;
-        tail_size_b = 0;
-    }
-    write_int(tail_size_b, fd_slots);
-    write_str(",", fd_slots);
-    write_int(tail_size_freed_b, fd_slots);
-    write_str(",", fd_slots);
-
-    write_int(is_merged, fd_slots);
-    write_str("\n", fd_slots);
-}
-
+    
 // 3. The Profiler
 void mallocstat(void) {
+    struct timespec start;
+    time_delta(&start);
+    
     struct meta_area *ma = ctx.meta_area_head;
 
     if (sample_id == 0) {
         // CSV Header
-        write_str("counter_ms,slotsize,pageaddr_body,n_phys_body,"
-                  "n_virt_body,pageaddr_head,head_size,head_size_freed,"
-                  "pageaddr_tail,tail_size,tail_size_freed,"
-                  "merged\n",
-                  fd_slots);
-        write_str("counter_ms,pageaddr,start,len,len_freed,merged\n",
-                  fd_subholes);
-        write_str("counter_ms,n_phys\n", fd_pages);
+        if (fd_slots != -1) {
+            write_str("counter_ms,hole_start,hole_len,is_merged",
+                      fd_slots);
+            mallocstat_hole_stat_print(NULL, fd_slots);
+            write_str("\n", fd_slots);
+        }
+
+        if (fd_subholes != -1) {
+            write_str("counter_ms,pageaddr,start,len,len_freed,merged\n",
+                      fd_subholes);
+        }
+
+        // fd-pages is always written
+        write_str("counter_ms,n_phys,is_merged,sample_ns", fd_pages);
+        mallocstat_hole_stat_print(NULL, fd_pages);
+        write_str("\n", fd_pages);
     }
 
     size_t n_phys = 0;
@@ -296,6 +297,8 @@ void mallocstat(void) {
                     scs[m->sizeclass] * 16; // Standard size class (UNIT = 16)
             }
 
+            page_vec_ensure((uintptr_t)m->mem, m->maplen*4096);
+
             // Loop through every slot that exists in this group
             for (int j = 0; j <= m->last_idx; j++) {
 
@@ -306,7 +309,6 @@ void mallocstat(void) {
                 }
 
                 uintptr_t slot_addr = groupaddr + (j * slot_size);
-
 #ifdef TEST
                 print_str("[STAT] slot addr: ");
                 print_hex(slot_addr);
@@ -317,26 +319,41 @@ void mallocstat(void) {
             }
 
             for (size_t j = 0; j < m->maplen; j++) {
-                void *curr_groupaddr = (char *)m->mem + (j * 4096);
-                unsigned char vec;
-                int is_resident = 0;
-                assert(mincore(curr_groupaddr, 4096, &vec) == 0);
-                is_resident = vec & 1;
-
+                uintptr_t curr_groupaddr = (uintptr_t)m->mem + (j * 4096);
+                int is_resident = page_vec_mapped(curr_groupaddr);
                 if (is_resident) {
                     n_phys++;
                 }
             }
+            mallocstat_hole_iterate(mallocstat_hole_callback);
+            mallocstat_hole_clear();
         }
         ma = ma->next;
     }
 
-    mallocstat_hole_iterate(mallocstat_hole_callback);
     mallocstat_hole_reset();
+        
+    double ns = time_delta(&start) * 1e9;
 
-    write_int(counter_ms, fd_pages);
-    write_str(",", fd_pages);
-    write_int(n_phys, fd_pages);
-    write_str("\n", fd_pages);
+    for (int is_merged = 0; is_merged < 2; is_merged++ ){
+        write_int(counter_ms, fd_pages);
+        write_str(",", fd_pages);
+        write_int(n_phys, fd_pages);
+        write_str(",", fd_pages);
+        write_int(is_merged, fd_pages);
+        write_str(",", fd_pages);
+        write_int((int)ns, fd_pages);
+
+        mallocstat_hole_stat_print(is_merged
+                                   ? &acc_merged_true
+                                   : &acc_merged_false,
+                                   fd_pages);
+        write_str("\n", fd_pages);
+    }
+
+    struct hole_stat zero = {0};
+    acc_merged_true = acc_merged_false = zero;
+    
+
     sample_id++;
 }

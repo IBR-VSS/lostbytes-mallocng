@@ -9,8 +9,8 @@ C_OBJS = $(C_SRCS:.c=.o)
 CXX_OBJS = $(CXX_SRCS:.cc=.o)
 OBJS = $(C_OBJS) $(CXX_OBJS)
 
-CFLAGS = -fPIC -Wall -O2 -ffreestanding
-CXXFLAGS = -std=c++23 -fPIC -Wall -O2 -fno-exceptions -fno-rtti 
+CFLAGS = -fPIC -Wall -O2 -ffreestanding -g
+CXXFLAGS = -std=c++23 -fPIC -Wall -O2 -fno-exceptions -fno-rtti  -g 
 
 CC ?= clang
 CXX ?= clang++

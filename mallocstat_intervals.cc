@@ -256,6 +256,11 @@ void mallocstat_hole_reset() {
     MapAllocator::clear_all();
 }
 
+void mallocstat_hole_clear() {
+    std::lock_guard<std::mutex> lock(map_mutex);
+    holes.clear();
+}
+
 } // extern "C"
 
 #ifdef TEST

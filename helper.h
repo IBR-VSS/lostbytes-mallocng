@@ -20,6 +20,8 @@ void write_hex(uintptr_t p, int fd);
 void mallocstat_hole_report(uintptr_t start, size_t length);
 void mallocstat_hole_iterate(void (*callback)(uintptr_t, size_t, int));
 void mallocstat_hole_reset();
+void mallocstat_hole_clear();
+
 
 #ifdef __cplusplus
 }
