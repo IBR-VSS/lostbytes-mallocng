@@ -66,9 +66,14 @@ static double time_delta(struct timespec *ts) {
 
 
 static void *profiler_thread(void *arg) {
+    int timer_interval = TIMER_INTERVAL_US;
+    char *TIMER = getenv("MALLOCSTAT_TIMER_INTERVAL");
+    if (TIMER)
+        timer_interval = atoi(TIMER) * 1000; // in ms
+        
     while (1) {
-        usleep(TIMER_INTERVAL_US);
-        counter_ms += TIMER_INTERVAL_US / 1000;
+        usleep(timer_interval);
+        counter_ms += timer_interval / 1000;
 
         if (MT && a_cas(&malloc_lock, 0, 1) != 0) {
             continue;
@@ -90,7 +95,10 @@ static void start_malloc_profiler(void) {
         fd_slots = open(MALLOCSTAT_SLOTS, O_CREAT | O_WRONLY | O_TRUNC, 0664);
     }
 
-    fd_pages = open("pages.csv", O_CREAT | O_WRONLY | O_TRUNC, 0664);
+    char *fn_pages = getenv("MALLOCSTAT_PAGES");
+    if (!fn_pages) fn_pages = "pages.csv";
+
+    fd_pages = open(fn_pages, O_CREAT | O_WRONLY | O_TRUNC, 0664);
     assert(fd_pages != -1);
 
     pthread_t tid;
@@ -105,7 +113,7 @@ static uint32_t sample_id = 0;
 
 static uintptr_t page_vec_addr;
 static size_t page_vec_len;
-static unsigned char page_vec[4096];
+static unsigned char page_vec[1024*1024];
 
 static int page_vec_mapped(uintptr_t addr) {
     uintptr_t off = addr - (uintptr_t) page_vec_addr;
