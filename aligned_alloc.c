@@ -22,9 +22,13 @@ void *aligned_alloc(size_t align, size_t len)
 	if (align <= UNIT) align = UNIT;
 
 	unsigned char *p = malloc(len + align - UNIT);
-    if (!p)
+    if (!p) {
         return 0;
-	struct meta *g = get_meta(p);
+    }
+    // Hide the origin of p from GCC's static analysis
+    __asm__ ("" : "+r" (p));
+    
+	struct meta *g = (void*)get_meta(p);
 	int idx = get_slot_index(p);
 	size_t stride = get_stride(g);
 	unsigned char *start = g->mem->storage + stride*idx;

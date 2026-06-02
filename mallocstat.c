@@ -26,12 +26,15 @@ const uint16_t scs[] = {
     146,  170,  204,  255,  292,  340,  409,  511,  584,  682,  818,  1023,
     1169, 1364, 1637, 2047, 2340, 2730, 3276, 4095, 4680, 5460, 6552, 8191};
 
-static uint64_t counter_ms = 0;
+static uint64_t counter_us = 0;
 #define TIMER_INTERVAL_US 1000000
 
 static int fd_slots = -1;
 static int fd_subholes = -1;
 static int fd_pages = -1;
+
+static struct timespec last_mallocstat;
+
 
 void mallocstat(void);
 
@@ -70,11 +73,8 @@ static void *profiler_thread(void *arg) {
     char *TIMER = getenv("MALLOCSTAT_TIMER_INTERVAL");
     if (TIMER)
         timer_interval = atoi(TIMER) * 1000; // in ms
-        
-    while (1) {
-        usleep(timer_interval);
-        counter_ms += timer_interval / 1000;
 
+    while (1) {
         if (MT && a_cas(&malloc_lock, 0, 1) != 0) {
             continue;
         }
@@ -83,13 +83,16 @@ static void *profiler_thread(void *arg) {
 
         if (MT)
             __sync_lock_release(&malloc_lock, 0);
+
+        usleep(timer_interval);
     }
     return NULL;
 }
 
 __attribute__((constructor)) 
 static void start_malloc_profiler(void) {
-    
+    time_delta(&last_mallocstat);
+
     fd_slots = -1;
     if (char *MALLOCSTAT_SLOTS = getenv("MALLOCSTAT_SLOTS")) {
         fd_slots = open(MALLOCSTAT_SLOTS, O_CREAT | O_WRONLY | O_TRUNC, 0664);
@@ -108,6 +111,16 @@ static void start_malloc_profiler(void) {
         print_str("Failed to start profiler thread..\n");
     }
 }
+
+// __attribute__((destructor)) 
+// static void library_exit_handler(void) {
+//     if (MT && a_cas(&malloc_lock, 0, 1) != 0) {
+//         return;
+//     }
+//     mallocstat();
+//     if (MT)
+//         __sync_lock_release(&malloc_lock, 0);
+// }
 
 static uint32_t sample_id = 0;
 
@@ -229,7 +242,7 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len,
 
     // Write CSV
     if (fd_slots != -1) {
-        write_int(counter_ms, fd_slots);
+        write_int(counter_us, fd_slots);
     
         write_str(",", fd_slots);
         write_hex(hole_start, fd_slots);
@@ -257,26 +270,28 @@ static void mallocstat_hole_callback(uintptr_t hole_start, size_t hole_len,
 // 3. The Profiler
 void mallocstat(void) {
     struct timespec start;
-    time_delta(&start);
+    double delta = time_delta(&last_mallocstat);
+    start = last_mallocstat;
+    counter_us += (int)delta * 1000000;
     
     struct meta_area *ma = ctx.meta_area_head;
 
     if (sample_id == 0) {
         // CSV Header
         if (fd_slots != -1) {
-            write_str("counter_ms,hole_start,hole_len,is_merged",
+            write_str("counter_us,hole_start,hole_len,is_merged",
                       fd_slots);
             mallocstat_hole_stat_print(NULL, fd_slots);
             write_str("\n", fd_slots);
         }
 
         if (fd_subholes != -1) {
-            write_str("counter_ms,pageaddr,start,len,len_freed,merged\n",
+            write_str("counter_us,pageaddr,start,len,len_freed,merged\n",
                       fd_subholes);
         }
 
         // fd-pages is always written
-        write_str("counter_ms,n_phys,is_merged,sample_ns", fd_pages);
+        write_str("counter_us,n_phys,is_merged,sample_ns", fd_pages);
         mallocstat_hole_stat_print(NULL, fd_pages);
         write_str("\n", fd_pages);
     }
@@ -346,7 +361,7 @@ void mallocstat(void) {
     double ns = time_delta(&start) * 1e9;
 
     for (int is_merged = 0; is_merged < 2; is_merged++ ){
-        write_int(counter_ms, fd_pages);
+        write_int(counter_us, fd_pages);
         write_str(",", fd_pages);
         write_int(n_phys, fd_pages);
         write_str(",", fd_pages);
