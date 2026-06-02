@@ -290,7 +290,8 @@ void mallocstat(void) {
             if (m->maplen == 0)
                 continue;
 
-            uintptr_t groupaddr = (uintptr_t)m->mem;
+            
+            uintptr_t groupaddr = page_floor((uintptr_t)m->mem);
             assert(groupaddr % 4096 == 0);
 
             // Combine masks to find all unused (ready + quarantined) slots
@@ -305,7 +306,7 @@ void mallocstat(void) {
                     scs[m->sizeclass] * 16; // Standard size class (UNIT = 16)
             }
 
-            page_vec_ensure((uintptr_t)m->mem, m->maplen*4096);
+            page_vec_ensure(groupaddr, m->maplen*4096);
 
             // Loop through every slot that exists in this group
             for (int j = 0; j <= m->last_idx; j++) {
@@ -316,8 +317,9 @@ void mallocstat(void) {
                     continue;
                 }
 
-                uintptr_t slot_addr = groupaddr + (j * slot_size);
-#ifdef TEST
+                uintptr_t slot_addr = (uintptr_t)m->mem->storage + (j * slot_size);
+                //#ifdef TEST
+#if 0
                 print_str("[STAT] slot addr: ");
                 print_hex(slot_addr);
                 print_str("\n");
