@@ -77,14 +77,13 @@ static void *profiler_thread(void *arg) {
     time_delta(&last_mallocstat);
 
     while (1) {
-        if (MT && a_cas(&malloc_lock, 0, 1) != 0) {
-            continue;
+        if (MT) {
+            while (__sync_val_compare_and_swap(&malloc_lock, 0, 1) != 0) {}
         }
-
         mallocstat();
 
         if (MT)
-            __sync_lock_release(&malloc_lock, 0);
+            __sync_lock_release(&malloc_lock);
 
         usleep(timer_interval);
     }
