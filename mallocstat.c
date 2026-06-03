@@ -74,6 +74,8 @@ static void *profiler_thread(void *arg) {
     if (TIMER)
         timer_interval = atoi(TIMER) * 1000; // in ms
 
+    time_delta(&last_mallocstat);
+
     while (1) {
         if (MT && a_cas(&malloc_lock, 0, 1) != 0) {
             continue;
@@ -91,8 +93,6 @@ static void *profiler_thread(void *arg) {
 
 __attribute__((constructor)) 
 static void start_malloc_profiler(void) {
-    time_delta(&last_mallocstat);
-
     fd_slots = -1;
     if (char *MALLOCSTAT_SLOTS = getenv("MALLOCSTAT_SLOTS")) {
         fd_slots = open(MALLOCSTAT_SLOTS, O_CREAT | O_WRONLY | O_TRUNC, 0664);
@@ -272,7 +272,7 @@ void mallocstat(void) {
     struct timespec start;
     double delta = time_delta(&last_mallocstat);
     start = last_mallocstat;
-    counter_us += (int)delta * 1000000;
+    counter_us += (int)(delta * 1000000);
     
     struct meta_area *ma = ctx.meta_area_head;
 
