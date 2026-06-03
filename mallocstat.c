@@ -300,14 +300,7 @@ void mallocstat(void) {
     while (ma != NULL) {
         for (int i = 0; i < ma->nslots; i++) {
             struct meta *m = &ma->slots[i];
-
-            // Ignore subgroups
-            if (m->maplen == 0)
-                continue;
-
-            
-            uintptr_t groupaddr = page_floor((uintptr_t)m->mem);
-            assert(groupaddr % 4096 == 0);
+            if (!m->mem) continue;
 
             // Combine masks to find all unused (ready + quarantined) slots
             uint32_t unused_mask = m->avail_mask | m->freed_mask;
@@ -320,8 +313,25 @@ void mallocstat(void) {
                 slot_size =
                     scs[m->sizeclass] * 16; // Standard size class (UNIT = 16)
             }
+            
+            if (m->maplen > 0) {
+                uintptr_t groupaddr = page_floor((uintptr_t)m->mem);
+                assert(groupaddr % 4096 == 0);
+                
+                page_vec_ensure(groupaddr, m->maplen*4096);
+            } else {
+                // This is a subgroup. Find the parent group for
+                // getting the paging information.
+                struct meta *pm = m;
+                while (!pm->maplen) {
+                    // size_t stride = get_stride(pm);
+                    pm = get_meta((void*)pm->mem);
+                }
 
-            page_vec_ensure(groupaddr, m->maplen*4096);
+                assert(pm->maplen > 0);
+                page_vec_ensure(page_floor((uintptr_t)pm->mem),
+                                pm->maplen*4096);
+            }
 
             // Loop through every slot that exists in this group
             for (int j = 0; j <= m->last_idx; j++) {
