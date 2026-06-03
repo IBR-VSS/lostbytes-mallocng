@@ -94,7 +94,8 @@ static void *profiler_thread(void *arg) {
 __attribute__((constructor)) 
 static void start_malloc_profiler(void) {
     fd_slots = -1;
-    if (char *MALLOCSTAT_SLOTS = getenv("MALLOCSTAT_SLOTS")) {
+    char *MALLOCSTAT_SLOTS = getenv("MALLOCSTAT_SLOTS");
+    if (MALLOCSTAT_SLOTS) {
         fd_slots = open(MALLOCSTAT_SLOTS, O_CREAT | O_WRONLY | O_TRUNC, 0664);
     }
 
