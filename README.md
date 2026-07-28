@@ -29,3 +29,10 @@ allocations come from groups of one of 48 size classes, spaced
 linearly up to 128 (the first 8 classes), then roughly geometrically
 with four steps per doubling, but adjusted to divide powers of two
 with minimal remainder (waste).
+
+## Profiler
+
+By default, the profiler captures the state of the allocator every 1s.
+The interval can be set in runtime by specifying the 
+`MALLOCSTAT_TIMER_INTERVAL` environment variable. The unit is in
+microseconds (us).
