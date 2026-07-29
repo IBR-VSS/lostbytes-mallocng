@@ -8,7 +8,7 @@ C_OBJS = $(C_SRCS:.c=.o)
 CXX_OBJS = $(CXX_SRCS:.cc=.o)
 OBJS = $(C_OBJS) $(CXX_OBJS)
 
-CFLAGS = -fPIC -Wall -O2 -ffreestanding -g -std=c17
+CFLAGS = -fPIC -Wall -O2 -ffreestanding -g -std=gnu17
 CXXFLAGS = -std=c++23 -fPIC -Wall -O2 -fno-exceptions -fno-rtti  -g 
 
 CC := clang

@@ -36,8 +36,8 @@
         devShell = with pkgs;
           mkShell {
             packages = [
+              clang
               clang-tools
-
               bear
             ];
             inputsFrom = [self.packages.${system}.default];
